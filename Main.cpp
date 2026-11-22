@@ -15,6 +15,7 @@
 #include <glm/gtc/quaternion.hpp>
 
 #include <glad/glad.h>
+#include "Shader.h"
 #include <GLFW/glfw3.h>
 
 #include <glm/glm.hpp>
@@ -435,32 +436,6 @@ void main()
 }
 )";
 
-bool comprobarShader(GLuint shader, const char* nombre)
-{
-    GLint ok = GL_FALSE;
-    glGetShaderiv(shader, GL_COMPILE_STATUS, &ok);
-    if (ok == GL_FALSE)
-    {
-        char log[2048];
-        glGetShaderInfoLog(shader, sizeof(log), nullptr, log);
-        std::cout << "Error compilando " << nombre << ":\n" << log << std::endl;
-    }
-    return ok == GL_TRUE;
-}
-
-bool comprobarPrograma(GLuint programa)
-{
-    GLint ok = GL_FALSE;
-    glGetProgramiv(programa, GL_LINK_STATUS, &ok);
-    if (ok == GL_FALSE)
-    {
-        char log[2048];
-        glGetProgramInfoLog(programa, sizeof(log), nullptr, log);
-        std::cout << "Error enlazando shaders:\n" << log << std::endl;
-    }
-    return ok == GL_TRUE;
-}
-
 int main()
 {
     // 1. Leer el archivo GLB.
@@ -543,274 +518,235 @@ int main()
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LESS);
 
-    // 4. Compilar y enlazar shaders.
-    GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
-    glShaderSource(vertexShader, 1, &vertexShaderSource, nullptr);
-    glCompileShader(vertexShader);
-    if (!comprobarShader(vertexShader, "VERTEX SHADER")) return -1;
+    { // Los objetos Shader se destruyen antes de cerrar el contexto OpenGL.
+    // 4. La clase Shader compila y enlaza los shaders del personaje.
+        Shader shaderPersonaje(vertexShaderSource, fragmentShaderSource);
+        if (!shaderPersonaje.valido()) return -1;
 
-    GLuint fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
-    glShaderSource(fragmentShader, 1, &fragmentShaderSource, nullptr);
-    glCompileShader(fragmentShader);
-    if (!comprobarShader(fragmentShader, "FRAGMENT SHADER")) return -1;
+        // 5. Crear VAO, VBO y EBO con los datos extraídos del GLB.
+        GLuint VAO, VBO, EBO;
+        glGenVertexArrays(1, &VAO);
+        glGenBuffers(1, &VBO);
+        glGenBuffers(1, &EBO);
 
-    GLuint shaderProgram = glCreateProgram();
-    glAttachShader(shaderProgram, vertexShader);
-    glAttachShader(shaderProgram, fragmentShader);
-    glLinkProgram(shaderProgram);
-    glDeleteShader(vertexShader);
-    glDeleteShader(fragmentShader);
-    if (!comprobarPrograma(shaderProgram)) return -1;
+        glBindVertexArray(VAO);
+        glBindBuffer(GL_ARRAY_BUFFER, VBO);
+        glBufferData(GL_ARRAY_BUFFER,
+            vertices.size() * sizeof(VerticeGPU), vertices.data(), GL_STATIC_DRAW);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+            indices.size() * sizeof(unsigned int), indices.data(), GL_STATIC_DRAW);
 
-    // 5. Crear VAO, VBO y EBO con los datos extraídos del GLB.
-    GLuint VAO, VBO, EBO;
-    glGenVertexArrays(1, &VAO);
-    glGenBuffers(1, &VBO);
-    glGenBuffers(1, &EBO);
+        const GLsizei stride = sizeof(VerticeGPU);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride,
+            (void*)offsetof(VerticeGPU, x));
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, stride,
+            (void*)offsetof(VerticeGPU, r));
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(3, 2, GL_FLOAT, GL_FALSE, stride,
+            (void*)offsetof(VerticeGPU, u));
+        glEnableVertexAttribArray(3);
+        glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, stride,
+            (void*)offsetof(VerticeGPU, nx));
+        glEnableVertexAttribArray(2);
+        glBindVertexArray(0);
 
-    glBindVertexArray(VAO);
-    glBindBuffer(GL_ARRAY_BUFFER, VBO);
-    glBufferData(GL_ARRAY_BUFFER,
-        vertices.size() * sizeof(VerticeGPU), vertices.data(), GL_STATIC_DRAW);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER,
-        indices.size() * sizeof(unsigned int), indices.data(), GL_STATIC_DRAW);
-
-    const GLsizei stride = sizeof(VerticeGPU);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride,
-        (void*)offsetof(VerticeGPU, x));
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, stride,
-        (void*)offsetof(VerticeGPU, r));
-    glEnableVertexAttribArray(1);
-    glVertexAttribPointer(3, 2, GL_FLOAT, GL_FALSE, stride,
-        (void*)offsetof(VerticeGPU, u));
-    glEnableVertexAttribArray(3);
-    glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, stride,
-        (void*)offsetof(VerticeGPU, nx));
-    glEnableVertexAttribArray(2);
-    glBindVertexArray(0);
-
-    // Geometria auxiliar: trayectoria Bezier y cuatro puntos de control.
-    // Se renderiza con un shader sencillo de color uniforme.
-    const char* curvaVS = R"GLSL(#version 330 core
+        // Geometria auxiliar: trayectoria Bezier y cuatro puntos de control.
+        // Se renderiza con un shader sencillo de color uniforme.
+        const char* curvaVS = R"GLSL(#version 330 core
 layout(location = 0) in vec3 aPos;
 uniform mat4 uVP;
 void main() { gl_Position = uVP * vec4(aPos, 1.0); }
 )GLSL";
-    const char* curvaFS = R"GLSL(#version 330 core
+        const char* curvaFS = R"GLSL(#version 330 core
 uniform vec3 uColor;
 out vec4 FragColor;
 void main() { FragColor = vec4(uColor, 1.0); }
 )GLSL";
-    GLuint curvaVert = glCreateShader(GL_VERTEX_SHADER);
-    glShaderSource(curvaVert, 1, &curvaVS, nullptr);
-    glCompileShader(curvaVert);
-    if (!comprobarShader(curvaVert, "vertex shader curva")) return -1;
-    GLuint curvaFrag = glCreateShader(GL_FRAGMENT_SHADER);
-    glShaderSource(curvaFrag, 1, &curvaFS, nullptr);
-    glCompileShader(curvaFrag);
-    if (!comprobarShader(curvaFrag, "fragment shader curva")) return -1;
-    GLuint curvaProgram = glCreateProgram();
-    glAttachShader(curvaProgram, curvaVert);
-    glAttachShader(curvaProgram, curvaFrag);
-    glLinkProgram(curvaProgram);
-    glDeleteShader(curvaVert);
-    glDeleteShader(curvaFrag);
-    if (!comprobarPrograma(curvaProgram)) return -1;
-    GLint curvaVPLoc = glGetUniformLocation(curvaProgram, "uVP");
-    GLint curvaColorLoc = glGetUniformLocation(curvaProgram, "uColor");
+        // Segundo programa: dibuja la curva y los puntos de control.
+        Shader shaderCurva(curvaVS, curvaFS);
+        if (!shaderCurva.valido()) return -1;
 
-    // La trayectoria se proyecta sobre el suelo (Y=-1.02).
-    const glm::vec3 puntosControl[4] = {
-        {-1.2f, -1.02f, 0.0f},
-        {-0.8f, -1.02f, -0.5f},
-        { 0.8f, -1.02f, 0.5f},
-        { 1.2f, -1.02f, 0.0f}
-    };
-    const int segmentosCurva = 120;
-    std::vector<glm::vec3> verticesCurva;
-    for (int i = 0; i <= segmentosCurva; ++i)
-    {
-        glm::vec3 punto = posicionPersonaje(float(i) / segmentosCurva);
-        punto.y = -1.02f;
-        verticesCurva.push_back(punto);
-    }
-
-    GLuint curvaVAO = 0, curvaVBO = 0, puntosVAO = 0, puntosVBO = 0;
-    glGenVertexArrays(1, &curvaVAO);
-    glGenBuffers(1, &curvaVBO);
-    glBindVertexArray(curvaVAO);
-    glBindBuffer(GL_ARRAY_BUFFER, curvaVBO);
-    glBufferData(GL_ARRAY_BUFFER, verticesCurva.size() * sizeof(glm::vec3),
-        verticesCurva.data(), GL_STATIC_DRAW);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(glm::vec3), (void*)0);
-    glEnableVertexAttribArray(0);
-
-    glGenVertexArrays(1, &puntosVAO);
-    glGenBuffers(1, &puntosVBO);
-    glBindVertexArray(puntosVAO);
-    glBindBuffer(GL_ARRAY_BUFFER, puntosVBO);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(puntosControl), puntosControl, GL_STATIC_DRAW);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(glm::vec3), (void*)0);
-    glEnableVertexAttribArray(0);
-    glBindVertexArray(0);
-
-    // 6. Crear una textura por imagen (y una textura blanca de reserva).
-    GLuint texturaBlanca = crearTextura(nullptr);
-    std::vector<GLuint> texturasImagen;
-    for (const auto& imagen : gltfModel.images)
-        texturasImagen.push_back(crearTextura(&imagen));
-
-    GLint mvpLoc = glGetUniformLocation(shaderProgram, "uMVP");
-    GLint texLoc = glGetUniformLocation(shaderProgram, "texture1");
-    GLint modelLoc = glGetUniformLocation(shaderProgram, "uModel");
-    GLint normalLoc = glGetUniformLocation(shaderProgram, "uNormalMatrix");
-    GLint lightPosLoc = glGetUniformLocation(shaderProgram, "lightPos");
-    GLint lightColorLoc = glGetUniformLocation(shaderProgram, "lightColor");
-    GLint viewPosLoc = glGetUniformLocation(shaderProgram, "viewPos");
-    GLint phongLoc = glGetUniformLocation(shaderProgram, "usarPhong");
-    GLint materialLoc = glGetUniformLocation(shaderProgram, "colorMaterial");
-
-    std::cout << "\n=== CONTROLES ===\n"
-        << "W / S: avanzar y retroceder\n"
-        << "A / D: izquierda y derecha\n"
-        << "Q / E: bajar y subir\n"
-        << "Flechas: girar la camara\n"
-        << "Shift: moverse mas rapido\n"
-        << "R: reiniciar camara\n"
-        << "0: camara manual y modelo quieto\n"
-        << "1: mover personaje por Bezier (camara manual)\n"
-        << "2: mover camara por Bezier (personaje quieto)\n"
-        << "3: mover ambos por Bezier\n"
-        << "ESPACIO: pausar / reanudar trayectoria\n"
-        << "B: mostrar / ocultar curva Bezier\n"
-        << "P: mostrar / ocultar puntos de control\n"
-        << "L: activar / desactivar iluminacion Phong\n"
-        << "ESC: salir\n" << std::endl;
-
-    float ultimoFrame = static_cast<float>(glfwGetTime());
-
-    // 7. Bucle de renderizado.
-    while (!glfwWindowShouldClose(window))
-    {
-        float tiempoActual = static_cast<float>(glfwGetTime());
-        float deltaTime = tiempoActual - ultimoFrame;
-        ultimoFrame = tiempoActual;
-        processInput(window, deltaTime);
-        if (animacionActiva) tiempoAnimacion += deltaTime;
-        // Ida y regreso suaves, periodo aproximado de 12 segundos.
-        float fase = 0.5f + 0.5f * sin(tiempoAnimacion * 0.52f);
-
-        int width, height;
-        glfwGetFramebufferSize(window, &width, &height);
-        if (height == 0) height = 1;
-        glViewport(0, 0, width, height);
-
-        glClearColor(0.60f, 0.33f, 0.42f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-        glm::mat4 projection = glm::perspective(
-            glm::radians(60.0f), (float)width / (float)height, 0.1f, 100.0f);
-        glm::vec3 posicionModelo(0.0f);
-        if (modoBezier == 1 || modoBezier == 3)
-            posicionModelo = posicionPersonaje(fase);
-
-        glm::vec3 camaraRender = cameraPos;
-        glm::vec3 objetivoCamara = cameraPos + cameraFront;
-        if (modoBezier == 2 || modoBezier == 3)
+        // La trayectoria se proyecta sobre el suelo (Y=-1.02).
+        const glm::vec3 puntosControl[4] = {
+            {-1.2f, -1.02f, 0.0f},
+            {-0.8f, -1.02f, -0.5f},
+            { 0.8f, -1.02f, 0.5f},
+            { 1.2f, -1.02f, 0.0f}
+        };
+        const int segmentosCurva = 120;
+        std::vector<glm::vec3> verticesCurva;
+        for (int i = 0; i <= segmentosCurva; ++i)
         {
-            camaraRender = posicionCamaraBezier(fase);
-            objetivoCamara = posicionModelo;
+            glm::vec3 punto = posicionPersonaje(float(i) / segmentosCurva);
+            punto.y = -1.02f;
+            verticesCurva.push_back(punto);
         }
-        glm::mat4 view = glm::lookAt(camaraRender, objetivoCamara, cameraUp);
 
-        // Centrar y escalar el modelo; después se rota lentamente sobre Y.
-        glm::mat4 model = glm::mat4(1.0f);
-        model = glm::translate(model, posicionModelo);
-        // Rotacion lenta opcional; en modo 0 queda quieto.
-        if (modoBezier != 0)
-            model = glm::rotate(model, tiempoAnimacion * glm::radians(15.0f),
-                glm::vec3(0.0f, 1.0f, 0.0f));
-        model = glm::scale(model, glm::vec3(escala));
-        model = glm::translate(model, -centro);
+        GLuint curvaVAO = 0, curvaVBO = 0, puntosVAO = 0, puntosVBO = 0;
+        glGenVertexArrays(1, &curvaVAO);
+        glGenBuffers(1, &curvaVBO);
+        glBindVertexArray(curvaVAO);
+        glBindBuffer(GL_ARRAY_BUFFER, curvaVBO);
+        glBufferData(GL_ARRAY_BUFFER, verticesCurva.size() * sizeof(glm::vec3),
+            verticesCurva.data(), GL_STATIC_DRAW);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(glm::vec3), (void*)0);
+        glEnableVertexAttribArray(0);
 
-        glm::mat4 mvp = projection * view * model;
-        glUseProgram(shaderProgram);
-        glUniformMatrix4fv(mvpLoc, 1, GL_FALSE, glm::value_ptr(mvp));
-        glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
-        glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(model)));
-        glUniformMatrix3fv(normalLoc, 1, GL_FALSE, glm::value_ptr(normalMatrix));
-        glUniform3f(lightPosLoc, 2.0f, 4.0f, 3.0f);
-        glUniform3f(lightColorLoc, 1.0f, 0.96f, 0.90f);
-        glUniform3fv(viewPosLoc, 1, glm::value_ptr(camaraRender));
-        glUniform1i(texLoc, 0);
-        glUniform1i(phongLoc, iluminacionPhong ? 1 : 0);
-        glActiveTexture(GL_TEXTURE0);
-        glBindVertexArray(VAO);
-        for (const auto& parte : partes) {
-            GLuint textura = texturaBlanca;
-            glm::vec4 color(1.0f);
-            if (parte.material >= 0 && parte.material < static_cast<int>(gltfModel.materials.size())) {
-                const auto& material = gltfModel.materials[parte.material];
-                const auto& pbr = material.pbrMetallicRoughness;
-                if (pbr.baseColorFactor.size() == 4)
-                    color = glm::vec4(pbr.baseColorFactor[0], pbr.baseColorFactor[1],
-                        pbr.baseColorFactor[2], pbr.baseColorFactor[3]);
-                int texIndex = pbr.baseColorTexture.index;
-                if (texIndex >= 0 && texIndex < static_cast<int>(gltfModel.textures.size())) {
-                    int imagen = gltfModel.textures[texIndex].source;
-                    if (imagen >= 0 && imagen < static_cast<int>(texturasImagen.size()))
-                        textura = texturasImagen[imagen];
-                }
-            }
-            glUniform4fv(materialLoc, 1, glm::value_ptr(color));
-            glBindTexture(GL_TEXTURE_2D, textura);
-            glDrawElements(GL_TRIANGLES, parte.cantidad, GL_UNSIGNED_INT,
-                reinterpret_cast<const void*>(parte.offset * sizeof(unsigned int)));
-        }
+        glGenVertexArrays(1, &puntosVAO);
+        glGenBuffers(1, &puntosVBO);
+        glBindVertexArray(puntosVAO);
+        glBindBuffer(GL_ARRAY_BUFFER, puntosVBO);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(puntosControl), puntosControl, GL_STATIC_DRAW);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(glm::vec3), (void*)0);
+        glEnableVertexAttribArray(0);
         glBindVertexArray(0);
 
-        // Dibujar la curva en coordenadas del mundo, sin transformacion del GLB.
-        // El personaje se traslada usando estos mismos puntos.
-        if (mostrarCurva || mostrarPuntos)
+        // 6. Crear una textura por imagen (y una textura blanca de reserva).
+        GLuint texturaBlanca = crearTextura(nullptr);
+        std::vector<GLuint> texturasImagen;
+        for (const auto& imagen : gltfModel.images)
+            texturasImagen.push_back(crearTextura(&imagen));
+
+        std::cout << "\n=== CONTROLES ===\n"
+            << "W / S: avanzar y retroceder\n"
+            << "A / D: izquierda y derecha\n"
+            << "Q / E: bajar y subir\n"
+            << "Flechas: girar la camara\n"
+            << "Shift: moverse mas rapido\n"
+            << "R: reiniciar camara\n"
+            << "0: camara manual y modelo quieto\n"
+            << "1: mover personaje por Bezier (camara manual)\n"
+            << "2: mover camara por Bezier (personaje quieto)\n"
+            << "3: mover ambos por Bezier\n"
+            << "ESPACIO: pausar / reanudar trayectoria\n"
+            << "B: mostrar / ocultar curva Bezier\n"
+            << "P: mostrar / ocultar puntos de control\n"
+            << "L: activar / desactivar iluminacion Phong\n"
+            << "ESC: salir\n" << std::endl;
+
+        float ultimoFrame = static_cast<float>(glfwGetTime());
+
+        // 7. Bucle de renderizado.
+        while (!glfwWindowShouldClose(window))
         {
-            glUseProgram(curvaProgram);
-            glm::mat4 vp = projection * view;
-            glUniformMatrix4fv(curvaVPLoc, 1, GL_FALSE, glm::value_ptr(vp));
-            if (mostrarCurva)
+            float tiempoActual = static_cast<float>(glfwGetTime());
+            float deltaTime = tiempoActual - ultimoFrame;
+            ultimoFrame = tiempoActual;
+            processInput(window, deltaTime);
+            if (animacionActiva) tiempoAnimacion += deltaTime;
+            // Ida y regreso suaves, periodo aproximado de 12 segundos.
+            float fase = 0.5f + 0.5f * sin(tiempoAnimacion * 0.52f);
+
+            int width, height;
+            glfwGetFramebufferSize(window, &width, &height);
+            if (height == 0) height = 1;
+            glViewport(0, 0, width, height);
+
+            glClearColor(0.60f, 0.33f, 0.42f, 1.0f);
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+            glm::mat4 projection = glm::perspective(
+                glm::radians(60.0f), (float)width / (float)height, 0.1f, 100.0f);
+            glm::vec3 posicionModelo(0.0f);
+            if (modoBezier == 1 || modoBezier == 3)
+                posicionModelo = posicionPersonaje(fase);
+
+            glm::vec3 camaraRender = cameraPos;
+            glm::vec3 objetivoCamara = cameraPos + cameraFront;
+            if (modoBezier == 2 || modoBezier == 3)
             {
-                glUniform3f(curvaColorLoc, 0.15f, 1.0f, 0.65f);
-                glBindVertexArray(curvaVAO);
-                glLineWidth(2.0f);
-                glDrawArrays(GL_LINE_STRIP, 0, segmentosCurva + 1);
+                camaraRender = posicionCamaraBezier(fase);
+                objetivoCamara = posicionModelo;
             }
-            if (mostrarPuntos)
-            {
-                glUniform3f(curvaColorLoc, 1.0f, 0.75f, 0.18f);
-                glBindVertexArray(puntosVAO);
-                glPointSize(10.0f);
-                glDrawArrays(GL_POINTS, 0, 4);
+            glm::mat4 view = glm::lookAt(camaraRender, objetivoCamara, cameraUp);
+
+            // Centrar y escalar el modelo; después se rota lentamente sobre Y.
+            glm::mat4 model = glm::mat4(1.0f);
+            model = glm::translate(model, posicionModelo);
+            // Rotacion lenta opcional; en modo 0 queda quieto.
+            if (modoBezier != 0)
+                model = glm::rotate(model, tiempoAnimacion * glm::radians(15.0f),
+                    glm::vec3(0.0f, 1.0f, 0.0f));
+            model = glm::scale(model, glm::vec3(escala));
+            model = glm::translate(model, -centro);
+
+            glm::mat4 mvp = projection * view * model;
+            shaderPersonaje.usar();
+            shaderPersonaje.setMat4("uMVP", mvp);
+            shaderPersonaje.setMat4("uModel", model);
+            glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(model)));
+            shaderPersonaje.setMat3("uNormalMatrix", normalMatrix);
+            shaderPersonaje.setVec3("lightPos", glm::vec3(2.0f, 4.0f, 3.0f));
+            shaderPersonaje.setVec3("lightColor", glm::vec3(1.0f, 0.96f, 0.90f));
+            shaderPersonaje.setVec3("viewPos", camaraRender);
+            shaderPersonaje.setInt("texture1", 0);
+            shaderPersonaje.setBool("usarPhong", iluminacionPhong);
+            glActiveTexture(GL_TEXTURE0);
+            glBindVertexArray(VAO);
+            for (const auto& parte : partes) {
+                GLuint textura = texturaBlanca;
+                glm::vec4 color(1.0f);
+                if (parte.material >= 0 && parte.material < static_cast<int>(gltfModel.materials.size())) {
+                    const auto& material = gltfModel.materials[parte.material];
+                    const auto& pbr = material.pbrMetallicRoughness;
+                    if (pbr.baseColorFactor.size() == 4)
+                        color = glm::vec4(pbr.baseColorFactor[0], pbr.baseColorFactor[1],
+                            pbr.baseColorFactor[2], pbr.baseColorFactor[3]);
+                    int texIndex = pbr.baseColorTexture.index;
+                    if (texIndex >= 0 && texIndex < static_cast<int>(gltfModel.textures.size())) {
+                        int imagen = gltfModel.textures[texIndex].source;
+                        if (imagen >= 0 && imagen < static_cast<int>(texturasImagen.size()))
+                            textura = texturasImagen[imagen];
+                    }
+                }
+                shaderPersonaje.setVec4("colorMaterial", color);
+                glBindTexture(GL_TEXTURE_2D, textura);
+                glDrawElements(GL_TRIANGLES, parte.cantidad, GL_UNSIGNED_INT,
+                    reinterpret_cast<const void*>(parte.offset * sizeof(unsigned int)));
             }
             glBindVertexArray(0);
+
+            // Dibujar la curva en coordenadas del mundo, sin transformacion del GLB.
+            // El personaje se traslada usando estos mismos puntos.
+            if (mostrarCurva || mostrarPuntos)
+            {
+                shaderCurva.usar();
+                glm::mat4 vp = projection * view;
+                shaderCurva.setMat4("uVP", vp);
+                if (mostrarCurva)
+                {
+                    shaderCurva.setVec3("uColor", glm::vec3(0.15f, 1.0f, 0.65f));
+                    glBindVertexArray(curvaVAO);
+                    glLineWidth(2.0f);
+                    glDrawArrays(GL_LINE_STRIP, 0, segmentosCurva + 1);
+                }
+                if (mostrarPuntos)
+                {
+                    shaderCurva.setVec3("uColor", glm::vec3(1.0f, 0.75f, 0.18f));
+                    glBindVertexArray(puntosVAO);
+                    glPointSize(10.0f);
+                    glDrawArrays(GL_POINTS, 0, 4);
+                }
+                glBindVertexArray(0);
+            }
+
+            glfwSwapBuffers(window);
+            glfwPollEvents();
         }
 
-        glfwSwapBuffers(window);
-        glfwPollEvents();
-    }
-
-    // 8. Liberar recursos de OpenGL.
-    glDeleteVertexArrays(1, &curvaVAO);
-    glDeleteVertexArrays(1, &puntosVAO);
-    glDeleteBuffers(1, &curvaVBO);
-    glDeleteBuffers(1, &puntosVBO);
-    glDeleteProgram(curvaProgram);
-    for (GLuint id : texturasImagen) glDeleteTextures(1, &id);
-    glDeleteTextures(1, &texturaBlanca);
-    glDeleteVertexArrays(1, &VAO);
-    glDeleteBuffers(1, &VBO);
-    glDeleteBuffers(1, &EBO);
-    glDeleteProgram(shaderProgram);
+        // 8. Liberar recursos de OpenGL.
+        glDeleteVertexArrays(1, &curvaVAO);
+        glDeleteVertexArrays(1, &puntosVAO);
+        glDeleteBuffers(1, &curvaVBO);
+        glDeleteBuffers(1, &puntosVBO);
+        for (GLuint id : texturasImagen) glDeleteTextures(1, &id);
+        glDeleteTextures(1, &texturaBlanca);
+        glDeleteVertexArrays(1, &VAO);
+        glDeleteBuffers(1, &VBO);
+        glDeleteBuffers(1, &EBO);
+    } // Destrucción automática de shaderPersonaje y shaderCurva.
     glfwDestroyWindow(window);
     glfwTerminate();
     return 0;
