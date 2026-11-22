@@ -39,7 +39,7 @@ Se emplean matrices de modelo, vista y proyección para posicionar y visualizar 
 
 ### Iluminación Blinn-Phong
 
-Se implementa un modelo de iluminación con componentes ambientales, difusas y especulares, que permite apreciar mejor el volumen y las superficies del personaje. La iluminación puede activarse o desactivarse durante la ejecución.
+Se implementa un modelo de iluminación con componentes ambientales, difusas y especulares, que permite apreciar mejor el volumen y las superficies del personaje. La iluminación puede activarse o desactivarse durante la ejecución sin eliminar las texturas del modelo.
 
 ### Animación mediante curvas Bézier
 
@@ -51,9 +51,9 @@ Se incorporan controles para desplazar la cámara, seleccionar modos de animaci�
 
 ## Arquitectura del software
 
-El proyecto utiliza una arquitectura monolítica organizada por funciones, donde los componentes principales se integran en el archivo `Main.cpp`.
+El proyecto utiliza una arquitectura modular sencilla, donde `Main.cpp` coordina la carga del modelo, las cámaras, las animaciones y el renderizado, mientras que la clase `Shader`, definida en `Shader.h` e implementada en `Shader.cpp`, se encarga de administrar los programas de shaders de OpenGL.
 
-El programa coordina la carga del modelo, la configuración de OpenGL, el manejo de la cámara, las animaciones, la iluminación y el renderizado de la escena.
+Esta organización permite separar las responsabilidades de cada archivo y facilita el mantenimiento del código.
 
 ### Componentes principales
 
@@ -63,6 +63,7 @@ El programa coordina la carga del modelo, la configuración de OpenGL, el manejo
 | **Procesamiento de geometría** | Organiza vértices, índices, normales y materiales para su representación. |
 | **Configuración gráfica** | GLFW y GLAD permiten crear la ventana e inicializar OpenGL. |
 | **Buffers gráficos** | VAO, VBO y EBO almacenan y organizan los datos utilizados durante el renderizado. |
+| **Clase Shader** | Administra la compilación, el enlazado y la utilización de los programas de shaders. |
 | **Shaders e iluminación** | Los shaders GLSL procesan la geometría, las texturas y la iluminación Blinn-Phong. |
 | **Cámara y transformaciones** | GLM permite calcular las matrices de modelo, vista y proyección. |
 | **Animaciones Bézier** | Calcula trayectorias para controlar el movimiento del personaje y la cámara. |
@@ -80,28 +81,86 @@ flowchart TD
     F["Bucle principal"]
     G["Controles del teclado"]
     H["Cámara y animaciones Bézier - GLM"]
-    I["Shaders e iluminación Blinn-Phong"]
-    J["Renderizado de la escena - OpenGL"]
-    K["Liberación de recursos"]
+    I["Clase Shader - Shader.h y Shader.cpp"]
+    J["Shaders GLSL e iluminación Blinn-Phong"]
+    K["Renderizado de la escena - OpenGL"]
+    L["Liberación de recursos"]
 
-    A --> B --> C --> D --> E --> F
+    A --> B
+    B --> C
+    C --> D
+    D --> E
+    E --> I
+    I --> J
+    J --> F
     F --> G
     F --> H
     F --> I
     G --> H
-    H --> J
-    I --> J
-    J --> F
-    F --> K
+    H --> K
+    J --> K
+    K --> F
+    F --> L
 ```
 
 ### Flujo de ejecución
 
 1. **Carga del modelo:** se lee el archivo GLB, se extrae su geometría y se calculan el centro y la escala del personaje.
-2. **Inicialización gráfica:** se crea la ventana, se configura OpenGL y se preparan los shaders, buffers y texturas.
-3. **Actualización:** en cada fotograma se procesan las entradas del teclado y se calculan las posiciones de la cámara y del personaje.
-4. **Renderizado:** se aplican las transformaciones, texturas e iluminación para dibujar el modelo y, cuando están activadas, la curva Bézier y sus puntos de control.
-5. **Finalización:** al cerrar la ventana, se liberan los recursos gráficos utilizados.
+2. **Inicialización gráfica:** se crea la ventana, se configura OpenGL y se preparan los buffers y las texturas.
+3. **Configuración de shaders:** la clase `Shader` administra los programas utilizados para representar el modelo y los elementos auxiliares.
+4. **Actualización:** en cada fotograma se procesan las entradas del teclado y se calculan las posiciones de la cámara y del personaje.
+5. **Renderizado:** se aplican las transformaciones, texturas e iluminación para dibujar el modelo y, cuando están activadas, la curva Bézier y sus puntos de control.
+6. **Finalización:** al cerrar la ventana, se liberan los recursos gráficos utilizados.
+
+## Implementación de la clase Shader
+
+Para mejorar la organización del proyecto, se implementó una clase `Shader` que permite administrar los programas de shaders utilizados en OpenGL.
+
+Anteriormente, la compilación y el enlazado de los shaders se realizaban directamente en `Main.cpp`. Con esta modificación, estas tareas se encuentran separadas del código principal, lo que facilita su comprensión, mantenimiento y reutilización.
+
+### Organización de los archivos
+
+- **Shader.h:** contiene la declaración de la clase `Shader` y los métodos disponibles.
+- **Shader.cpp:** implementa las funciones necesarias para compilar, enlazar y utilizar los programas de shaders.
+- **Main.cpp:** controla la carga del modelo 3D, las transformaciones, las cámaras, la iluminación, las curvas de Bézier y el renderizado de la escena.
+
+### Funcionamiento de la clase
+
+La clase `Shader` se encarga de administrar los programas utilizados por la GPU para procesar los vértices y determinar la apariencia de los fragmentos.
+
+Sus principales responsabilidades son:
+
+1. Compilar el Vertex Shader y el Fragment Shader.
+2. Enlazar ambos shaders en un programa de OpenGL.
+3. Comprobar posibles errores de compilación o enlazado.
+4. Activar el programa correspondiente durante el renderizado.
+5. Enviar variables `uniform`, como matrices de transformación, posiciones, colores y parámetros de iluminación.
+
+### Aplicación en Matilda
+
+El proyecto utiliza dos programas de shaders con funciones diferentes.
+
+**Shader del modelo 3D**
+
+Procesa los vértices del personaje, aplica las transformaciones necesarias y calcula su apariencia mediante las texturas, los materiales y la iluminación Blinn-Phong.
+
+La iluminación puede activarse o desactivarse con la tecla `L`, conservando las texturas del modelo.
+
+**Shader de las curvas de Bézier**
+
+Se utiliza para representar visualmente la trayectoria del personaje y sus puntos de control.
+
+Este programa emplea una transformación de cámara y proyección, junto con un color uniforme, para dibujar los elementos auxiliares de la escena.
+
+La curva se puede mostrar con la tecla `B` y los puntos de control con la tecla `P`.
+
+### Ventajas de esta implementación
+
+La separación de los shaders en una clase permite reducir el código repetido dentro de `Main.cpp` y organizar mejor las responsabilidades de cada archivo.
+
+Además, facilita la incorporación de nuevos programas de shaders sin tener que repetir todo el proceso de compilación y enlazado.
+
+Esta modificación mantiene el funcionamiento original del proyecto, incluyendo la visualización del modelo GLB, la iluminación Blinn-Phong, los controles de cámara y las animaciones mediante curvas de Bézier.
 
 ## Controles del programa
 
@@ -139,9 +198,11 @@ Los controles manuales de la cámara están disponibles en los modos `0` y `1`.
 
 ## Estructura del proyecto
 
-- `Main.cpp`: contiene la configuración de OpenGL, la carga del modelo, los shaders, la iluminación, las transformaciones, los controles y las animaciones.
-- `Models/`: contiene el archivo `Matilda.glb` utilizado para representar el personaje.
-- `Libraries/`: incluye las bibliotecas y dependencias utilizadas.
+- **Main.cpp:** contiene la carga del modelo GLB, la configuración de OpenGL, las transformaciones, las cámaras, la iluminación, los controles y las animaciones.
+- **Shader.h:** declara la clase `Shader` y los métodos utilizados para administrar los programas de shaders.
+- **Shader.cpp:** implementa la compilación, el enlazado, la activación y la configuración de variables de los shaders.
+- **Models/:** contiene el archivo `Matilda.glb`, utilizado para representar el personaje.
+- **Libraries/:** incluye las bibliotecas y dependencias necesarias para el funcionamiento del proyecto.
 - **Archivos de Visual Studio:** permiten abrir, configurar y compilar el proyecto.
 
 ## Ejecución del proyecto
@@ -164,4 +225,4 @@ Al iniciar, se carga el modelo Matilda y se habilitan los controles del teclado 
 
 El desarrollo de este proyecto permitió aplicar conocimientos de gráficos por computadora mediante la integración de modelos tridimensionales, transformaciones, iluminación, manejo de cámaras y animaciones con curvas Bézier utilizando OpenGL.
 
-
+Además, la implementación de la clase `Shader` permitió mejorar la organización del código mediante la separación de responsabilidades, facilitando la comprensión de la arquitectura y la administración de los programas gráficos.
